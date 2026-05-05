@@ -43,14 +43,14 @@ metadata {
       attribute "grid_power", "string"
       attribute "load_power", "string"
       attribute "pv_power", "string"
-      
+
       // Battery Storage Attributes
       attribute "storage_status", "string"  // Idle, Charging, Discharging
-      attribute "storage_power", "string"   // Power either coming in (charging) or going out (Discharging), value is positive regardless of direction
+      attribute "storage_power", "string"   // Power either coming in (charging) or going out (discharging), value is positive regardless of direction
       attribute "storage_charge", "string"  // 51.0 for 51% charge
-      
+
       attribute "battery", "number"         // Duplication of storage_charge attribute to align to Battery capability
-        
+
       attribute "energy_tile", "string"
       attribute "overview_tile", "string"
       attribute "power_flow_tile", "string"
@@ -292,6 +292,7 @@ def queryOverviewEndpoint() {
         log.debug "Response: ${r.data}"
       }
 
+      // Use Elvis operator ?: 0 to safely handle null values returned by the API
       delayBetween([
         sendEvent(name: "power",      value: r.data.overview.currentPower.power       ?: 0),
         sendEvent(name: "last_day",   value: r.data.overview.lastDayData.energy       ?: 0),
@@ -344,7 +345,8 @@ def querySitePowerFlowEndpoint() {
         log.debug "Response: ${r.data}"
       }
 
-      // FIX: gebruik Elvis-operator ?: 0 om null-waarden op te vangen
+      // FIX: extract power values first, defaulting null to 0 and casting to BigDecimal
+      // to prevent GroovyRuntimeException: Ambiguous method overloading for BigDecimal#minus
       def pvPower   = (r.data.siteCurrentPowerFlow?.PV?.currentPower   ?: 0) as BigDecimal
       def loadPower = (r.data.siteCurrentPowerFlow?.LOAD?.currentPower ?: 0) as BigDecimal
       def gridPower = (r.data.siteCurrentPowerFlow?.GRID?.currentPower ?: 0) as BigDecimal
@@ -356,6 +358,7 @@ def querySitePowerFlowEndpoint() {
         sendEvent(name: "pv_power",   value: pvPower   + " " + unit)
       ])
 
+      // Storage is optional; default storagePower to 0 if not present
       def storagePower = 0.0 as BigDecimal
       if (r.data.siteCurrentPowerFlow?.STORAGE) {
         storagePower = (r.data.siteCurrentPowerFlow.STORAGE.currentPower ?: 0) as BigDecimal
@@ -367,7 +370,7 @@ def querySitePowerFlowEndpoint() {
         ])
       }
 
-      // FIX: alle waarden zijn nu gegarandeerd BigDecimal, geen null meer
+      // All values are now guaranteed BigDecimal, arithmetic is safe
       if (pvPower + storagePower - loadPower > 0) {
         state.flow_direction = "green"
       } else {
@@ -405,7 +408,7 @@ def updateTiles() {
 
   state.last_updated = new Date().format("YYYY-MM-dd HH:mm:ss")
 
-  // FIX: null-safe ophalen van device waarden
+  // Null-safe retrieval of device attribute values before comparisons
   def production  = (device.currentValue("production")  ?: 0) as BigDecimal
   def consumption = (device.currentValue("consumption") ?: 0) as BigDecimal
 
@@ -453,10 +456,10 @@ def updateTiles() {
 
   def power_flow_tile = "<div style='font-size: 15px;'><table width='100%'>"
   if (settings.power_flow_title) power_flow_tile += "<tr><td style='text-align: center; width: 100%'>" + settings.power_flow_title + "</td></tr>"
-  if (device.currentValue("pv_power"))      power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Solar: <span style='color: green;'>"                              + device.currentValue("pv_power")      + "</span></td></tr>"
-  if (device.currentValue("grid_power"))    power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Grid: <span style='color: "  + (state.flow_direction ?: "red") + ";'>" + device.currentValue("grid_power")    + "</span></td></tr>"
-  if (device.currentValue("storage_power")) power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Battery: <span style='color: green;'>"                            + device.currentValue("storage_power") + "</span></td></tr>"
-  if (device.currentValue("load_power"))    power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Usage: <span style='color: red;'>"                               + device.currentValue("load_power")    + "</span></td></tr>"
+  if (device.currentValue("pv_power"))      power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Solar: <span style='color: green;'>"                                   + device.currentValue("pv_power")      + "</span></td></tr>"
+  if (device.currentValue("grid_power"))    power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Grid: <span style='color: " + (state.flow_direction ?: "red") + ";'>" + device.currentValue("grid_power")    + "</span></td></tr>"
+  if (device.currentValue("storage_power")) power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Battery: <span style='color: green;'>"                                 + device.currentValue("storage_power") + "</span></td></tr>"
+  if (device.currentValue("load_power"))    power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Usage: <span style='color: red;'>"                                     + device.currentValue("load_power")    + "</span></td></tr>"
   if (settings.display_last_updated == true) power_flow_tile += "<tr><td style='text-align: center; width: 100%'><br />Last Updated: " + state.last_updated + "</td></tr>"
   power_flow_tile += "</table></div>"
 
@@ -464,7 +467,7 @@ def updateTiles() {
 }
 
 private formatEnergy(energy) {
-  // FIX: null-check zodat formatEnergy nooit crasht
+  // Guard against null to prevent NullPointerException
   if (energy == null) return "0 Wh"
   def e = energy as BigDecimal
   if (e < 1000)    return e + " Wh"
